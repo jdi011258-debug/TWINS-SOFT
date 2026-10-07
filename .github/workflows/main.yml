@@ -34,11 +34,45 @@ jobs:
           unzip -q gradle.zip -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
 
+      - name: Extract Android project
+        run: |
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP project found"
+            exit 1
+          fi
+
+          echo "Found project: $ZIP_FILE"
+
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+          PROJECT_DIR=$(find extracted -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -print -quit | xargs dirname)
+
+          if [ -z "$PROJECT_DIR" ] || [ "$PROJECT_DIR" = "extracted" ]; then
+            echo "Searching for Gradle project..."
+            PROJECT_DIR=$(find extracted -type f -name "build.gradle*" -print -quit | xargs dirname)
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Gradle project files were not found"
+            find extracted -maxdepth 4 -type f | sort
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
+
       - name: Build APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: TWINS-SOFT-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
