@@ -23,27 +23,48 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK
+      - name: Install Android SDK
         shell: bash
         run: |
-          export ANDROID_HOME="${ANDROID_SDK_ROOT}"
-          echo "ANDROID_HOME=${ANDROID_HOME}" >> "$GITHUB_ENV"
+          set -e
 
-          echo "${ANDROID_HOME}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "${ANDROID_HOME}/platform-tools" >> "$GITHUB_PATH"
+          export ANDROID_SDK_ROOT="$HOME/android-sdk"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
 
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+
+          cd "$RUNNER_TEMP"
+
+          curl -L -o commandlinetools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+
+          unzip -q commandlinetools.zip
+
+          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+
+          cp -r cmdline-tools/* \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+
+          sdkmanager --version
+
+          yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Install Gradle
+      - name: Install Gradle 8.9
         shell: bash
         run: |
-          curl -L \
-            -o gradle.zip \
+          curl -L -o gradle.zip \
             https://services.gradle.org/distributions/gradle-8.9-bin.zip
 
           unzip -q gradle.zip -d "$RUNNER_TEMP"
@@ -57,39 +78,34 @@ jobs:
         run: |
           set -e
 
-          ZIP_FILE=$(find . -type f -iname "*.zip" \
-            -not -path "./.git/*" | head -n 1)
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: ZIP project not found"
+            echo "ERROR: No ZIP project found"
             exit 1
           fi
 
-          echo "ZIP: $ZIP_FILE"
+          echo "Found ZIP: $ZIP_FILE"
 
           rm -rf extracted
           mkdir extracted
 
           unzip -q "$ZIP_FILE" -d extracted
 
-          echo "Searching for Gradle project..."
-
           PROJECT_DIR=""
 
-          while IFS= read -r SETTINGS; do
-            PROJECT_DIR=$(dirname "$SETTINGS")
-            break
-          done < <(
-            find extracted -type f \
-              \( -name "settings.gradle" \
-              -o -name "settings.gradle.kts" \)
-          )
+          SETTINGS_FILE=$(find extracted -type f \
+            \( -name "settings.gradle" -o -name "settings.gradle.kts" \) \
+            -print -quit)
+
+          if [ -n "$SETTINGS_FILE" ]; then
+            PROJECT_DIR=$(dirname "$SETTINGS_FILE")
+          fi
 
           if [ -z "$PROJECT_DIR" ]; then
             BUILD_FILE=$(find extracted -type f \
-              \( -name "build.gradle" \
-              -o -name "build.gradle.kts" \) \
-              | head -n 1)
+              \( -name "build.gradle" -o -name "build.gradle.kts" \) \
+              -print -quit)
 
             if [ -n "$BUILD_FILE" ]; then
               PROJECT_DIR=$(dirname "$BUILD_FILE")
@@ -97,26 +113,21 @@ jobs:
           fi
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Gradle project not found"
+            echo "ERROR: Gradle project was not found"
             find extracted -maxdepth 5 -type f | sort
             exit 1
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "=============================="
-          echo "PROJECT FOUND:"
+          echo "Android project:"
           echo "$PROJECT_DIR"
-          echo "=============================="
 
       - name: Build APK
         shell: bash
         run: |
           set -e
-
           cd "$PROJECT_DIR"
-
-          echo "Building TWINS SOFT..."
 
           gradle assembleDebug \
             --no-daemon \
@@ -125,28 +136,23 @@ jobs:
       - name: Find APK
         shell: bash
         run: |
-          set -e
-
           APK=$(find "$PROJECT_DIR" \
             -type f \
-            -path "*/build/outputs/apk/debug/*.apk" \
+            -name "*.apk" \
             | head -n 1)
 
           if [ -z "$APK" ]; then
             echo "ERROR: APK was not created"
-            find "$PROJECT_DIR" \
-              -type f -name "*.apk" -print
             exit 1
           fi
 
-          echo "APK FOUND:"
+          echo "APK found:"
           echo "$APK"
 
-          cp "$APK" TWINS-SOFT.apk
+          cp "$APK" "$GITHUB_WORKSPACE/TWINS-SOFT.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: TWINS-SOFT-debug
+          name: TWINS-SOFT-APK
           path: TWINS-SOFT.apk
-          if-no-files-found: error
